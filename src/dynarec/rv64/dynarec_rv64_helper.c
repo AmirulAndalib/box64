@@ -2752,6 +2752,12 @@ void vector_loadmask(dynarec_rv64_t* dyn, int ninst, int vreg, uint64_t imm, int
             return;
         } else if ((sew == VECTOR_SEW8 && vlmul == VECTOR_LMUL1) || (sew == VECTOR_SEW16 && vlmul == VECTOR_LMUL2)) {
             switch (imm) {
+                case 0b0000000000001111:
+                    vector_vsetvli(dyn, ninst, s1, VECTOR_SEW32, VECTOR_LMUL1, 1);
+                    MOV64x(s1, 0xFFFFFFFFFFFFFFFFULL);
+                    VMV_S_X(vreg, s1);
+                    vector_vsetvli(dyn, ninst, s1, sew, vlmul, multiple);
+                    return;
                 case 0b0000000011111111:
                     vector_vsetvli(dyn, ninst, s1, VECTOR_SEW64, VECTOR_LMUL1, 1);
                     MOV64x(s1, 0xFFFFFFFFFFFFFFFFULL);
@@ -2777,9 +2783,20 @@ void vector_loadmask(dynarec_rv64_t* dyn, int ninst, int vreg, uint64_t imm, int
     } else {
         if (imm <= 0xF && (dyn->vector_eew == VECTOR_SEW32 || dyn->vector_eew == VECTOR_SEW64)) {
             VMV_V_I(vreg, imm);
+        } else if (dyn->vector_eew == VECTOR_SEW8 && imm >= 0xFF) {
+            if ((imm > 0xFF) && (imm & 0xFF) == (imm >> 8)) {
+                MOV64x(s1, imm);
+                VMV_V_X(vreg, s1);
+            } else if (imm > 0xFF) {
+                abort(); // not used (yet)
+            } else {
+                MOV64x(s1, imm);
+                VXOR_VV(vreg, vreg, vreg, VECTOR_UNMASKED);
+                VMV_S_X(vreg, s1);
+            }
         } else {
             MOV64x(s1, imm);
-            VMV_V_X(vreg, s1);
+            VMV_S_X(vreg, s1);
         }
     }
 #endif

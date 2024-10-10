@@ -9,10 +9,17 @@
 
 void convertXEvent(my_XEvent_32_t* dst, my_XEvent_t* src);
 void unconvertXEvent(my_XEvent_t* dst, my_XEvent_32_t* src);
-void* addDisplay(void* d);  // Adde new Native Display*, return a 32bits one
-void* FindDisplay(void* d); // Find a Native Diplay* and return the 32bits one
-void* getDisplay(void* d); // return the Native Display from a 32bits one
-void delDisplay(void* d); // removed a 32bits Display and associated ressources
+void convert_XErrorEvent_to_32(void* d, void* s);
+void convert_XErrorEvent_to_64(void* d, void* s);
+
+// Add a new Native Display*, return a 32bits one
+void* addDisplay(void* d);
+// Find a Native Diplay* and return the 32bits one
+void* FindDisplay(void* d);
+// return the Native Display from a 32bits one
+void* getDisplay(void* d);
+// removed a 32bits Display and associated ressources
+void delDisplay(void* d);
 
 void convert_Screen_to_32(void* d, void* s);
 
@@ -56,5 +63,17 @@ void WrapXImage(void* d, void* s);  //define in wrappedx11.c because it contains
 void UnwrapXImage(void* d, void* s);
 void* inplace_XImage_shrink(void* a);
 void* inplace_XImage_enlarge(void* a);
+
+void convert_XRRModeInfo_to_32(void* d, const void* s);
+void convert_XRRModeInfo_to_64(void* d, const void* s);
+void inplace_XRRScreenResources_shrink(void* s);
+void inplace_XRRScreenResources_enlarge(void* s);
+void inplace_XRRCrtcInfo_shrink(void* s);
+void inplace_XRROutputInfo_shrink(void* s);
+void inplace_XRRProviderInfo_shrink(void* a);
+void inplace_XRRProviderInfo_enlarge(void* a);
+void inplace_XRRProviderResources_shrink(void* a);
+void inplace_XRRProviderResources_enlarge(void* a);
+void* inplace_XRRPropertyInfo_shrink(void* a);
 
 #endif//MY_X11_CONV

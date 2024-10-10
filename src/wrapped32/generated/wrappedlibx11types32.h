@@ -12,6 +12,7 @@
 #endif
 
 typedef void (*vFp_t)(void*);
+typedef void (*vFX_t)(void*);
 typedef int32_t (*iFp_t)(void*);
 typedef int32_t (*iFX_t)(void*);
 typedef void* (*pFp_t)(void*);
@@ -33,11 +34,11 @@ typedef int32_t (*iFXlp_t)(void*, intptr_t, void*);
 typedef int32_t (*iFXLp_t)(void*, uintptr_t, void*);
 typedef uintptr_t (*LFXii_t)(void*, int32_t, int32_t);
 typedef void* (*pFXip_t)(void*, int32_t, void*);
-typedef int32_t (*iFpLlp_t)(void*, uintptr_t, intptr_t, void*);
 typedef int32_t (*iFXLip_t)(void*, uintptr_t, int32_t, void*);
 typedef int32_t (*iFXLlp_t)(void*, uintptr_t, intptr_t, void*);
 typedef int32_t (*iFXLLp_t)(void*, uintptr_t, uintptr_t, void*);
 typedef int32_t (*iFXLpi_t)(void*, uintptr_t, void*, int32_t);
+typedef int32_t (*iFXLpp_t)(void*, uintptr_t, void*, void*);
 typedef int32_t (*iFXppp_t)(void*, void*, void*, void*);
 typedef void* (*pFXlpp_t)(void*, intptr_t, void*, void*);
 typedef int32_t (*iFXbpLiL_pp_t)(void*, struct_pLiL_t*, void*, void*);
@@ -52,16 +53,19 @@ typedef void* (*pFXpppp_t)(void*, void*, void*, void*, void*);
 typedef int32_t (*iFpppipp_t)(void*, void*, void*, int32_t, void*, void*);
 typedef int32_t (*iFXLpppp_t)(void*, uintptr_t, void*, void*, void*, void*);
 typedef int32_t (*iFXppppp_t)(void*, void*, void*, void*, void*, void*);
+typedef int32_t (*iFppipppp_t)(void*, void*, int32_t, void*, void*, void*, void*);
 typedef int32_t (*iFXLLLiipi_t)(void*, uintptr_t, uintptr_t, uintptr_t, int32_t, int32_t, void*, int32_t);
 typedef void* (*pFXLiiuuLi_t)(void*, uintptr_t, int32_t, int32_t, uint32_t, uint32_t, uintptr_t, int32_t);
 typedef void (*vFXLpppippp_t)(void*, uintptr_t, void*, void*, void*, int32_t, void*, void*, void*);
 typedef int32_t (*iFXLppiiiiuu_t)(void*, uintptr_t, void*, void*, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t);
 typedef void* (*pFXpuiipuuii_t)(void*, void*, uint32_t, int32_t, int32_t, void*, uint32_t, uint32_t, int32_t, int32_t);
 typedef void* (*pFXLiiuuLipii_t)(void*, uintptr_t, int32_t, int32_t, uint32_t, uint32_t, uintptr_t, int32_t, void*, int32_t, int32_t);
+typedef int32_t (*iFXLLlliLppppp_t)(void*, uintptr_t, uintptr_t, intptr_t, intptr_t, int32_t, uintptr_t, void*, void*, void*, void*, void*);
 typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32_t, uint32_t, uint32_t, int32_t, uint32_t, void*, uintptr_t, void*);
 
 #define SUPER() ADDED_FUNCTIONS() \
 	GO(XFreeStringList, vFp_t) \
+	GO(XLockDisplay, vFX_t) \
 	GO(XDestroyImage, iFp_t) \
 	GO(XFreeExtensionList, iFp_t) \
 	GO(XFreeModifiermap, iFp_t) \
@@ -88,6 +92,7 @@ typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32
 	GO(XSynchronize, pFXi_t) \
 	GO(XGetWMHints, pFXL_t) \
 	GO(XListExtensions, pFXp_t) \
+	GO(XLoadQueryFont, pFXp_t) \
 	GO(XSetWMNormalHints, vFXLp_t) \
 	GO(XStringListToTextProperty, iFpip_t) \
 	GO(XCheckTypedEvent, iFXip_t) \
@@ -98,12 +103,13 @@ typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32
 	GO(XESetCloseDisplay, pFXip_t) \
 	GO(XESetEventToWire, pFXip_t) \
 	GO(XESetWireToEvent, pFXip_t) \
-	GO(XWindowEvent, iFpLlp_t) \
 	GO(XCheckTypedWindowEvent, iFXLip_t) \
 	GO(XCheckWindowEvent, iFXLlp_t) \
+	GO(XWindowEvent, iFXLlp_t) \
 	GO(XChangeWindowAttributes, iFXLLp_t) \
 	GO(XQueryColors, iFXLpi_t) \
 	GO(XSetWMProtocols, iFXLpi_t) \
+	GO(XGetWMNormalHints, iFXLpp_t) \
 	GO(XCheckIfEvent, iFXppp_t) \
 	GO(XIfEvent, iFXppp_t) \
 	GO(XGetVisualInfo, pFXlpp_t) \
@@ -112,6 +118,7 @@ typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32
 	GO(XSendEvent, iFXLilp_t) \
 	GO(XFreeColors, iFXLpiL_t) \
 	GO(XInternAtoms, iFXpiip_t) \
+	GO(XmbTextListToTextProperty, iFXpiup_t) \
 	GO(Xutf8TextListToTextProperty, iFXpiup_t) \
 	GO(XQueryExtension, iFXpppp_t) \
 	GO(XSubImage, pFpiiuu_t) \
@@ -121,6 +128,7 @@ typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32
 	GO(XQueryTree, iFXLpppp_t) \
 	GO(XRegisterIMInstantiateCallback, iFXppppp_t) \
 	GO(XUnregisterIMInstantiateCallback, iFXppppp_t) \
+	GO(XTextExtents, iFppipppp_t) \
 	GO(XChangeProperty, iFXLLLiipi_t) \
 	GO(XGetImage, pFXLiiuuLi_t) \
 	GO(XSetWMProperties, vFXLpppippp_t) \
@@ -128,6 +136,7 @@ typedef uintptr_t (*LFXLiiuuuiupLp_t)(void*, uintptr_t, int32_t, int32_t, uint32
 	GO(XPutImage, iFXLppiiiiuu_t) \
 	GO(XCreateImage, pFXpuiipuuii_t) \
 	GO(XGetSubImage, pFXLiiuuLipii_t) \
+	GO(XGetWindowProperty, iFXLLlliLppppp_t) \
 	GO(XCreateWindow, LFXLiiuuuiupLp_t)
 
 #endif // __wrappedlibx11TYPES32_H_

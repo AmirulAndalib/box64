@@ -42,7 +42,9 @@ void UnwrapXImage(void* d, void* s);
 void WrapXImage(void* d, void* s);
 
 typedef void (*vFp_t)(void*);
+typedef int  (*iFp_t)(void*);
 typedef uint32_t (*uFv_t)(void);
+typedef int  (*iFpp_t)(void*, void*);
 typedef int32_t (*iFpl_t)(void*, intptr_t);
 typedef uintptr_t (*LFpii_t)(void*, int32_t, int32_t);
 typedef int32_t (*iFpiiL_t)(void*, int32_t, int32_t, uintptr_t);
@@ -50,28 +52,11 @@ typedef void* (*pFpiiuu_t)(void*, int32_t, int32_t, uint32_t, uint32_t);
 
 #define ADDED_FUNCTIONS()       \
     GO(XInitThreads, uFv_t)     \
-    GO(XLockDisplay, vFp_t)     \
     GO(XUnlockDisplay, vFp_t)
 
 #include "generated/wrappedlibx11types32.h"
 
 #include "wrappercallback32.h"
-
-void convert_Screen_to_32(void* d, void* s);
-void* FindDisplay(void* d);
-void* getDisplay(void* d);
-void convert_XErrorEvent_to_32(void* d, void* s)
-{
-    my_XErrorEvent_t* src = s;
-    my_XErrorEvent_32_t* dst = d;
-    dst->type = src->type;
-    dst->display = to_ptrv(FindDisplay(src->display));
-    dst->resourceid = to_ulong(src->resourceid);
-    dst->serial = to_ulong(src->serial);
-    dst->error_code = src->error_code;
-    dst->request_code = src->request_code;
-    dst->minor_code = src->minor_code;
-}
 
 #define SUPER() \
 GO(0)   \
@@ -168,7 +153,17 @@ static int my32_error_handler_##A(void* dpy, void* error)                       
 {                                                                                           \
     static my_XErrorEvent_32_t evt = {0};                                                   \
     convert_XErrorEvent_to_32(&evt, error);                                                 \
-    return (int)RunFunctionFmt(my32_error_handler_fct_##A, "pp", getDisplay(dpy), &evt);    \
+    return (int)RunFunctionFmt(my32_error_handler_fct_##A, "pp", FindDisplay(dpy), &evt);   \
+}
+SUPER()
+#undef GO
+#define GO(A)   \
+static iFpp_t my32_rev_error_handler_fct_##A = NULL;                                        \
+static int my32_rev_error_handler_##A(void* dpy, void* error)                               \
+{                                                                                           \
+    my_XErrorEvent_t evt = {0};                                                             \
+    convert_XErrorEvent_to_64(&evt, error);                                                 \
+    return my32_rev_error_handler_fct_##A (getDisplay(dpy), &evt);                          \
 }
 SUPER()
 #undef GO
@@ -185,15 +180,28 @@ static void* finderror_handlerFct(void* fct)
     printf_log(LOG_NONE, "Warning, no more slot for libX11 error_handler callback\n");
     return NULL;
 }
-static void* reverse_error_handlerFct(library_t* lib, void* fct)
+static void* reverse_error_handler_Fct(library_t* lib, void* fct)
 {
+    //Callsed from x86 world -> native world
     if(!fct) return fct;
-    if(CheckBridged(lib->w.bridge, fct))
-        return (void*)CheckBridged(lib->w.bridge, fct);
+    // first check if it's a wrapped function, that could be easy
     #define GO(A) if(my32_error_handler_##A == fct) return (void*)my32_error_handler_fct_##A;
     SUPER()
     #undef GO
-    return (void*)AddBridge(lib->w.bridge, iFpp_32, fct, 0, NULL);
+    if(FindElfAddress(my_context, (uintptr_t)fct))
+        return fct;
+    // it's a naitve one... so bridge it, but need transform XImage32 to XImage
+    void* f = NULL;
+    #define GO(A) if(!f && my32_rev_error_handler_fct_##A == fct) f = (void*)my32_rev_error_handler_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(!f && !my32_rev_error_handler_fct_##A) {my32_rev_error_handler_fct_##A = fct; f = my32_rev_error_handler_##A;}
+    SUPER()
+    #undef GO
+    if(f)
+        return (void*)AddCheckBridge(lib->w.bridge, iFpp_32, f, 0, "X11_error_handler");
+    printf_log(LOG_NONE, "Warning, no more slot for reverse 32bits libX11 error_handler callback\n");
+    return fct;
 }
 
 // ioerror_handler
@@ -201,7 +209,15 @@ static void* reverse_error_handlerFct(library_t* lib, void* fct)
 static uintptr_t my32_ioerror_handler_fct_##A = 0;                                  \
 static int my32_ioerror_handler_##A(void* dpy)                                      \
 {                                                                                   \
-    return (int)RunFunctionFmt(my32_ioerror_handler_fct_##A, "p", getDisplay(dpy)); \
+    return (int)RunFunctionFmt(my32_ioerror_handler_fct_##A, "p", FindDisplay(dpy));\
+}
+SUPER()
+#undef GO
+#define GO(A)   \
+static iFp_t my32_rev_ioerror_handler_fct_##A = NULL;                               \
+static int my32_rev_ioerror_handler_##A(void* dpy)                                  \
+{                                                                                   \
+    return my32_rev_ioerror_handler_fct_##A (getDisplay(dpy));                      \
 }
 SUPER()
 #undef GO
@@ -218,16 +234,30 @@ static void* findioerror_handlerFct(void* fct)
     printf_log(LOG_NONE, "Warning, no more slot for libX11 ioerror_handler callback\n");
     return NULL;
 }
-static void* reverse_ioerror_handlerFct(library_t* lib, void* fct)
+static void* reverse_ioerror_handler_Fct(library_t* lib, void* fct)
 {
+    //Callsed from x86 world -> native world
     if(!fct) return fct;
-    if(CheckBridged(lib->w.bridge, fct))
-        return (void*)CheckBridged(lib->w.bridge, fct);
+    // first check if it's a wrapped function, that could be easy
     #define GO(A) if(my32_ioerror_handler_##A == fct) return (void*)my32_ioerror_handler_fct_##A;
     SUPER()
     #undef GO
-    return (void*)AddBridge(lib->w.bridge, iFp_32, fct, 0, NULL);
+    if(FindElfAddress(my_context, (uintptr_t)fct))
+        return fct;
+    // it's a naitve one... so bridge it, but need transform XImage32 to XImage
+    void* f = NULL;
+    #define GO(A) if(!f && my32_rev_ioerror_handler_fct_##A == fct) f = (void*)my32_rev_ioerror_handler_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(!f && !my32_rev_ioerror_handler_fct_##A) {my32_rev_ioerror_handler_fct_##A = fct; f = my32_rev_ioerror_handler_##A;}
+    SUPER()
+    #undef GO
+    if(f)
+        return (void*)AddCheckBridge(lib->w.bridge, iFp_32, f, 0, "X11_ioerror_handler");
+    printf_log(LOG_NONE, "Warning, no more slot for reverse 32bits libX11 ioerror_handler callback\n");
+    return fct;
 }
+
 #if 0
 // exterror_handler
 #define GO(A)   \
@@ -512,7 +542,7 @@ static void* my32_create_image_##A(void* a, void* b, uint32_t c, int d, int e, v
 static pFXpuiipuuii_t my32_rev_create_image_fct_##A = NULL;                                                                         \
 static void* my32_rev_create_image_##A(void* a, void* b, uint32_t c, int d, int e, void* f, uint32_t g, uint32_t h, int i, int j)   \
 {                                                                                                                                   \
-    void* ret = my32_rev_create_image_fct_##A (FindDisplay(a), b, c, d, e, f, g, h, i, j);                                          \
+    void* ret = my32_rev_create_image_fct_##A (getDisplay(a), b, c, d, e, f, g, h, i, j);                                           \
     WrapXImage(ret, ret);                                                                                                           \
     return ret;                                                                                                                     \
 }
@@ -521,7 +551,11 @@ SUPER()
 static void* find_create_image_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_create_image_##A == n_fct) return (void*)my32_rev_create_image_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_create_image_fct_##A == (uintptr_t)fct) return my32_create_image_##A;
     SUPER()
     #undef GO
@@ -536,7 +570,7 @@ static void* reverse_create_image_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_create_image_fct_##A == (uintptr_t)fct) return my32_create_image_##A;
+    #define GO(A) if(my32_create_image_##A == fct) return (void*)my32_create_image_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -559,13 +593,13 @@ static void* reverse_create_image_Fct(library_t* lib, void* fct)
 static uintptr_t my32_destroy_image_fct_##A = 0;                    \
 static int my32_destroy_image_##A(void* a)                          \
 {                                                                   \
-    WrapXImage(a, a);                                               \
+    inplace_XImage_shrink(a);                                       \
     return (int)RunFunctionFmt(my32_destroy_image_fct_##A, "p", a); \
 }                                                                   \
 static iFp_t my32_rev_destroy_image_fct_##A = NULL;                 \
 static int my32_rev_destroy_image_##A(void* a)                      \
 {                                                                   \
-    UnwrapXImage(a, a);                                             \
+    inplace_XImage_enlarge(a);                                      \
     to_hash_d((uintptr_t)((XImage*)a)->obdata);                     \
     return my32_rev_destroy_image_fct_##A (a);                      \
 }
@@ -574,7 +608,11 @@ SUPER()
 static void* find_destroy_image_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_destroy_image_##A == n_fct) return (void*)my32_rev_destroy_image_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_destroy_image_fct_##A == (uintptr_t)fct) return my32_destroy_image_##A;
     SUPER()
     #undef GO
@@ -589,7 +627,7 @@ static void* reverse_destroy_image_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_destroy_image_fct_##A == (uintptr_t)fct) return my32_destroy_image_##A;
+    #define GO(A) if(my32_destroy_image_##A == fct) return (void*)my32_destroy_image_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -612,17 +650,17 @@ static void* reverse_destroy_image_Fct(library_t* lib, void* fct)
 static uintptr_t my32_get_pixel_fct_##A = 0;                                    \
 static unsigned long my32_get_pixel_##A(void* a, int b, int c)                  \
 {                                                                               \
-    WrapXImage(a, a);                                                           \
+    inplace_XImage_shrink(a);                                                   \
     uint32_t ret = RunFunctionFmt(my32_get_pixel_fct_##A, "pii", a, b, c);      \
-    UnwrapXImage(a, a);                                                         \
+    inplace_XImage_enlarge(a);                                                  \
     return from_ulong(ret);                                                     \
 }                                                                               \
 static LFpii_t my32_rev_get_pixel_fct_##A = NULL;                               \
-static ulong_t my32_rev_get_pixel_##A(void* a, int b, int c)                    \
+static unsigned long my32_rev_get_pixel_##A(void* a, int b, int c)              \
 {                                                                               \
-    UnwrapXImage(a, a);                                                         \
-    ulong_t ret = to_ulong(my32_rev_get_pixel_fct_##A (a, b, c));               \
-    WrapXImage(a, a);                                                           \
+    inplace_XImage_enlarge(a);                                                  \
+    unsigned long ret = my32_rev_get_pixel_fct_##A (a, b, c);                   \
+    inplace_XImage_shrink(a);                                                   \
     return ret;                                                                 \
 }
 SUPER()
@@ -630,7 +668,11 @@ SUPER()
 static void* find_get_pixel_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_get_pixel_##A == n_fct) return (void*)my32_rev_get_pixel_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_get_pixel_fct_##A == (uintptr_t)fct) return my32_get_pixel_##A;
     SUPER()
     #undef GO
@@ -645,7 +687,7 @@ static void* reverse_get_pixel_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_get_pixel_fct_##A == (uintptr_t)fct) return my32_get_pixel_##A;
+    #define GO(A) if(my32_get_pixel_##A == fct) return (void*)my32_get_pixel_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -668,17 +710,17 @@ static void* reverse_get_pixel_Fct(library_t* lib, void* fct)
 static uintptr_t my32_put_pixel_fct_##A = 0;                                    \
 static int my32_put_pixel_##A(void* a, int b, int c,unsigned long d)            \
 {                                                                               \
-    WrapXImage(a, a);                                                           \
+    inplace_XImage_shrink(a);                                                   \
     int ret =  (int)RunFunctionFmt(my32_put_pixel_fct_##A, "piiL", a, b, c, d); \
-    UnwrapXImage(a, a);                                                         \
+    inplace_XImage_enlarge(a);                                                  \
     return ret;                                                                 \
 }                                                                               \
 static iFpiiL_t my32_rev_put_pixel_fct_##A = NULL;                              \
 static int my32_rev_put_pixel_##A(void* a, int b, int c, ulong_t d)             \
 {                                                                               \
-    UnwrapXImage(a, a);                                                         \
-    int ret = to_ulong(my32_rev_put_pixel_fct_##A (a, b, c, from_ulong(d)));    \
-    WrapXImage(a, a);                                                           \
+    inplace_XImage_enlarge(a);                                                  \
+    int ret = my32_rev_put_pixel_fct_##A (a, b, c, from_ulong(d));              \
+    inplace_XImage_shrink(a);                                                   \
     return ret;                                                                 \
 }
 SUPER()
@@ -686,7 +728,11 @@ SUPER()
 static void* find_put_pixel_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_put_pixel_##A == n_fct) return (void*)my32_rev_put_pixel_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_put_pixel_fct_##A == (uintptr_t)fct) return my32_put_pixel_##A;
     SUPER()
     #undef GO
@@ -701,7 +747,7 @@ static void* reverse_put_pixel_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_put_pixel_fct_##A == (uintptr_t)fct) return my32_put_pixel_##A;
+    #define GO(A) if(my32_put_pixel_##A == fct) return (void*)my32_put_pixel_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -724,20 +770,20 @@ static void* reverse_put_pixel_Fct(library_t* lib, void* fct)
 static uintptr_t my32_sub_image_fct_##A = 0;                                        \
 static void* my32_sub_image_##A(void* a, int b, int c, uint32_t d, uint32_t e)      \
 {                                                                                   \
-    WrapXImage(a, a);                                                               \
+    inplace_XImage_shrink(a);                                                       \
     void* ret = (void*)RunFunctionFmt(my32_sub_image_fct_##A, "piiuu", a, b, c, d, e);\
     if(ret!=a) UnwrapXImage(ret, ret);                                              \
-    UnwrapXImage(a, a);                                                             \
+    inplace_XImage_enlarge(a);                                                      \
     return ret;                                                                     \
 }                                                                                   \
 static pFpiiuu_t my32_rev_sub_image_fct_##A = NULL;                                 \
 static void* my32_rev_sub_image_##A(void* a, int b, int c, uint32_t d, uint32_t e)  \
 {                                                                                   \
-    UnwrapXImage(a, a);                                                             \
+    inplace_XImage_enlarge(a);                                                      \
     void* ret = my32_rev_sub_image_fct_##A (a, b, c, d, e);                         \
     if(ret!=a)                                                                      \
         WrapXImage(ret, ret);                                                       \
-    WrapXImage(a, a);                                                               \
+    inplace_XImage_shrink(a);                                                       \
     return ret;                                                                     \
 }
 SUPER()
@@ -745,7 +791,11 @@ SUPER()
 static void* find_sub_image_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_sub_image_##A == n_fct) return (void*)my32_rev_sub_image_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_sub_image_fct_##A == (uintptr_t)fct) return my32_sub_image_##A;
     SUPER()
     #undef GO
@@ -760,7 +810,7 @@ static void* reverse_sub_image_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_sub_image_fct_##A == (uintptr_t)fct) return my32_sub_image_##A;
+    #define GO(A) if(my32_sub_image_##A == fct) return (void*)my32_sub_image_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -783,17 +833,17 @@ static void* reverse_sub_image_Fct(library_t* lib, void* fct)
 static uintptr_t my32_add_pixel_fct_##A = 0;                        \
 static int my32_add_pixel_##A(void* a, long b)                      \
 {                                                                   \
-    WrapXImage(a, a);                                               \
+    inplace_XImage_shrink(a);                                       \
     int ret =  (int)RunFunctionFmt(my32_add_pixel_fct_##A, "pl", a, b); \
-    UnwrapXImage(a, a);                                             \
+    inplace_XImage_enlarge(a);                                      \
     return ret;                                                     \
 }                                                                   \
 static iFpl_t my32_rev_add_pixel_fct_##A = NULL;                    \
 static int my32_rev_add_pixel_##A(void* a, long_t b)                \
 {                                                                   \
-    UnwrapXImage(a, a);                                             \
+    inplace_XImage_enlarge(a);                                      \
     int ret = my32_rev_add_pixel_fct_##A (a, from_long(b));         \
-    WrapXImage(a, a);                                               \
+    inplace_XImage_shrink(a);                                       \
     return ret;                                                     \
 }
 SUPER()
@@ -801,7 +851,11 @@ SUPER()
 static void* find_add_pixel_Fct(void* fct)
 {
     if(!fct) return fct;
-    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    void* n_fct = GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my32_rev_add_pixel_##A == n_fct) return (void*)my32_rev_add_pixel_fct_##A;
+    SUPER()
+    #undef GO
+    if(n_fct)  return n_fct;
     #define GO(A) if(my32_add_pixel_fct_##A == (uintptr_t)fct) return my32_add_pixel_##A;
     SUPER()
     #undef GO
@@ -816,7 +870,7 @@ static void* reverse_add_pixel_Fct(library_t* lib, void* fct)
     //Callsed from x86 world -> native world
     if(!fct) return fct;
     // first check if it's a wrapped function, that could be easy
-    #define GO(A) if(my32_add_pixel_fct_##A == (uintptr_t)fct) return my32_add_pixel_##A;
+    #define GO(A) if(my32_add_pixel_##A == fct) return (void*)my32_add_pixel_fct_##A;
     SUPER()
     #undef GO
     if(FindElfAddress(my_context, (uintptr_t)fct))
@@ -1182,34 +1236,34 @@ GO(XNStringConversionCallback)
 switch (VAARGSZ)                                                \
 {                                                               \
 case 2:                                                         \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], NULL);       \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), NULL);       \
     break;                                                      \
 case 4:                                                         \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], NULL);     \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), NULL);     \
     break;                                                                          \
 case 6:                                                                             \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], NULL);   \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), NULL);   \
     break;                                                                                              \
 case 8:                                                                                                 \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], NULL); \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), NULL); \
     break;                                                                                                                  \
 case 10:                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9], NULL);   \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]), NULL);   \
     break;                                                                                                                                          \
 case 12:                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9],  va[10], va[11], NULL);  \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]),  from_ulong(va[10]), from_ulong(va[11]), NULL);  \
     break;                                                                                                                                                                  \
 case 14:                                                                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9],  va[10], va[11], va[12], va[13], NULL);  \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]),  from_ulong(va[10]), from_ulong(va[11]), from_ulong(va[12]), from_ulong(va[13]), NULL);  \
     break;                                                                                                                                                                                          \
 case 16:                                                                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9],  va[10], va[11], va[12], va[13], va[14], va[15], NULL);  \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]),  from_ulong(va[10]), from_ulong(va[11]), from_ulong(va[12]), from_ulong(va[13]), from_ulong(va[14]), from_ulong(va[15]), NULL);  \
     break;                                                                                                                                                                                                                  \
 case 18:                                                                                                                                                                                                                    \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9],  va[10], va[11], va[12], va[13], va[14], va[15], va[16], va[17], NULL);  \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]),  from_ulong(va[10]), from_ulong(va[11]), from_ulong(va[12]), from_ulong(va[13]), from_ulong(va[14]), from_ulong(va[15]), from_ulong(va[16]), from_ulong(va[17]), NULL);  \
     break;                                                                                                                                                                                                                                          \
 case 20:                                                                                                                                                                                                                                            \
-    RESULT = FUNC(FIRST_ARG, va[0], va[1], va[2], va[3], va[4], va[5], va[6], va[7], va[8], va[9],  va[10], va[11], va[12], va[13], va[14], va[15], va[16], va[17], va[18], va[19], NULL);  \
+    RESULT = FUNC(FIRST_ARG, from_ulong(va[0]), from_ulong(va[1]), from_ulong(va[2]), from_ulong(va[3]), from_ulong(va[4]), from_ulong(va[5]), from_ulong(va[6]), from_ulong(va[7]), from_ulong(va[8]), from_ulong(va[9]),  from_ulong(va[10]), from_ulong(va[11]), from_ulong(va[12]), from_ulong(va[13]), from_ulong(va[14]), from_ulong(va[15]), from_ulong(va[16]), from_ulong(va[17]), from_ulong(va[18]), from_ulong(va[19]), NULL);  \
     break;                                                                                                                                                                                                                                                                  \
 default:                                                                                                                \
     printf_log(LOG_NONE, "warning: %s's vasize (%d) is too large, need create new call case!\n", __func__, VAARGSZ);    \
@@ -1286,13 +1340,13 @@ EXPORT void* my32_XSetIMValues(x64emu_t* emu, void* xim, ptr_t* va) {
 EXPORT void* my32_XSetErrorHandler(x64emu_t* emu, XErrorHandler handler)
 {
     void* ret = my->XSetErrorHandler(finderror_handlerFct(handler));
-    return reverse_error_handlerFct(my_lib, ret);
+    return reverse_error_handler_Fct(my_lib, ret);
 }
 
 EXPORT void* my32_XSetIOErrorHandler(x64emu_t* emu, XIOErrorHandler handler)
 {
     void* ret = my->XSetIOErrorHandler(findioerror_handlerFct(handler));
-    return reverse_ioerror_handlerFct(my_lib, ret);
+    return reverse_ioerror_handler_Fct(my_lib, ret);
 }
 
 #if 0
@@ -1442,24 +1496,24 @@ EXPORT void* my32_XGetImage(x64emu_t* emu, void* disp, size_t drawable, int32_t 
     if(!img)
         return img;
     // bridge all access functions...
-    WrapXImage(img, img);
+    inplace_XImage_shrink(img);
     return img;
 }
 
 EXPORT void my32__XInitImageFuncPtrs(x64emu_t* emu, XImage* img)
 {
     my->_XInitImageFuncPtrs(img);
-    WrapXImage(emu, img);
+    inplace_XImage_shrink(img);
 }
 
 EXPORT int32_t my32_XPutImage(x64emu_t* emu, void* disp, size_t drawable, void* gc, void* image
                     , int32_t src_x, int32_t src_y, int32_t dst_x, int32_t dst_y
                     , uint32_t w, uint32_t h)
 {
-    UnwrapXImage(image, image); // what if the image was created on x86 side and is smaller?
+    inplace_XImage_enlarge(image); // what if the image was created on x86 side and is smaller?
     int32_t r = my->XPutImage(disp, drawable, gc, image, src_x, src_y, dst_x, dst_y, w, h);
     // bridge all access functions...
-    WrapXImage(image, image);
+    inplace_XImage_shrink(image);
     return r;
 }
 
@@ -1469,19 +1523,19 @@ EXPORT void* my32_XGetSubImage(x64emu_t* emu, void* disp, size_t drawable
                     , void* image, int32_t dst_x, int32_t dst_y)
 {
 
-    UnwrapXImage(image, image);
+    inplace_XImage_enlarge(image);
     XImage *img = my->XGetSubImage(disp, drawable, x, y, w, h, plane, fmt, image, dst_x, dst_y);
     if(img && img!=image)
-        WrapXImage(img, img);
+        inplace_XImage_shrink(img);
 
-    WrapXImage(image, image);
+    inplace_XImage_shrink(image);
     return img;
 }
 
 EXPORT void my32_XDestroyImage(x64emu_t* emu, void* image)
 {
 
-    UnwrapXImage(image, image);
+    inplace_XImage_enlarge(image);
     to_hash_d((uintptr_t)((XImage*)image)->obdata);
     my->XDestroyImage(image);
 }
@@ -1566,7 +1620,7 @@ EXPORT void* my32_XSynchronize(x64emu_t* emu, void* display, int onoff)
 EXPORT void* my32_XOpenDisplay(void* name)
 {
     void* ret = my->XOpenDisplay(name);
-    if(ret && box64_x11sync) my->XSynchronize(ret, 1);
+    if(ret && box64_x11sync) {my->XSynchronize(ret, 1); printf_log(LOG_INFO, "Forcing Syncronized opration on Display %p\n", ret);}
     return ret;
 }
 
@@ -1581,23 +1635,8 @@ EXPORT int my32_XCloseDisplay(x64emu_t* emu, void* dpy)
 EXPORT XID my32_XCreateWindow(x64emu_t* emu, void* d, XID Window, int x, int y, uint32_t width, uint32_t height, uint32_t border_width, int depth, uint32_t cl, void* visual,  unsigned long mask, my_XSetWindowAttributes_32_t* attr)
 {
     my_XSetWindowAttributes_t attrib;
-    if(attr) {
-        attrib.background_pixmap = from_ulong(attr->background_pixmap);
-        attrib.background_pixel = from_ulong(attr->background_pixel);
-        attrib.border_pixmap = from_ulong(attr->border_pixmap);
-        attrib.border_pixel = from_ulong(attr->border_pixel);
-        attrib.bit_gravity = attr->bit_gravity;
-        attrib.win_gravity = attr->win_gravity;
-        attrib.backing_store = attr->backing_store;
-        attrib.backing_planes = from_ulong(attr->backing_planes);
-        attrib.backing_pixel = from_ulong(attr->backing_pixel);
-        attrib.save_under = attr->save_under;
-        attrib.event_mask = from_long(attr->event_mask);
-        attrib.do_not_propagate_mask = from_long(attr->do_not_propagate_mask);
-        attrib.override_redirect = attr->override_redirect;
-        attrib.colormap = from_ulong(attr->colormap);
-        attrib.cursor = from_ulong(attr->cursor);
-    }
+    if(attr)
+        convert_XSetWindowAttributes_to_64(&attrib, attr);
     return my->XCreateWindow(d, Window, x, y, width, height, border_width, depth, cl, visual, mask, attr?(&attrib):NULL);
 }
 
@@ -1645,7 +1684,7 @@ EXPORT int my32_XWindowEvent(x64emu_t* emu, void* dpy, XID window, long mask, my
 {
     my_XEvent_t event = {0};
     int ret = my->XWindowEvent(dpy, window, mask, &event);
-    if(ret) convertXEvent(evt, &event);
+    convertXEvent(evt, &event);
     return ret;
 }
 
@@ -1765,6 +1804,19 @@ EXPORT int my32_XSetWMNormalHints(x64emu_t* emu, void* dpy, XID window, void* hi
     my->XSetWMNormalHints(dpy, window, hints);
     inplace_shrink_wmsizehints(hints);
 }
+
+EXPORT int my32_XGetWMNormalHints(x64emu_t* emu, void* dpy, XID window, void* hints, long_t* supplied)
+{
+    long supplied_l = 0;
+    int hints_l[17+2] = {0};
+    int ret = my->XGetWMNormalHints(dpy, window, hints?hints_l:NULL, supplied?(&supplied_l):NULL);
+    if(supplied) *supplied = to_long(supplied_l);
+    if(hints) {
+        *(long_t*)hints = to_long(*(long*)hints_l);
+        memcpy(hints+4, hints_l+2, 17*4);
+    }
+    return ret;
+}
 #if 0
 EXPORT void* my32__XGetRequest(x64emu_t* emu, my_XDisplay_t* dpy, uint8_t type, size_t len)
 {
@@ -1804,6 +1856,18 @@ EXPORT int my32_Xutf8TextListToTextProperty(x64emu_t* emu, void* dpy, ptr_t* lis
             l_list[i] = from_ptrv(list[i]);
     struct_pLiL_t text_l = {0};
     int ret = my->Xutf8TextListToTextProperty(dpy, list?(&l_list):NULL, count, style, &text_l);
+    to_struct_pLiL(to_ptrv(text), &text_l);
+    return ret;
+}
+
+EXPORT int my32_XmbTextListToTextProperty(x64emu_t* emu, void* dpy, ptr_t* list, int count, uint32_t style, void* text)
+{
+    char* l_list[count];
+    if(list)
+        for(int i=0; i<count; ++i)
+            l_list[i] = from_ptrv(list[i]);
+    struct_pLiL_t text_l = {0};
+    int ret = my->XmbTextListToTextProperty(dpy, list?(&l_list):NULL, count, style, &text_l);
     to_struct_pLiL(to_ptrv(text), &text_l);
     return ret;
 }
@@ -2044,13 +2108,53 @@ EXPORT int my32_XFreeFont(x64emu_t* emu, void* dpy, void* f)
 
 EXPORT int my32_XChangeWindowAttributes(x64emu_t* emu, void* dpy, XID window, unsigned long mask, my_XSetWindowAttributes_32_t* attrs)
 {
-    my_XSetWindowAttributes_t attrs_l[32];
-    for(int i=0, j=0; i<32; ++i)
-        if(mask&(1<<i)) {
-            convert_XSetWindowAttributes_to_64(attrs_l+j, attrs+j);
-            ++j;
-        }
+    my_XSetWindowAttributes_t attrs_l[1];
+    convert_XSetWindowAttributes_to_64(attrs_l, attrs);
     return my->XChangeWindowAttributes(dpy, window, mask, attrs_l);
+}
+
+EXPORT int my32_XGetWindowProperty(x64emu_t* emu, void* dpy, XID window, XID prop, long offset, long length, int delete, XID req, XID* type_return, int* fmt_return, ulong_t* nitems_return, ulong_t* bytes, ptr_t*prop_return)
+{
+    unsigned long nitems_l = 0, bytes_l = 0;
+    void* prop_l = NULL;
+    int ret = my->XGetWindowProperty(dpy, window, prop, offset, length, delete, req, type_return, fmt_return, &nitems_l, &bytes_l, &prop_l);
+    *nitems_return = to_ulong(nitems_l);
+    *bytes = to_ulong(bytes_l);
+    *prop_return = to_ptrv(prop_l);
+    if(!ret && *fmt_return==32) {
+        // inplace shrink
+        unsigned long *src = prop_l;
+        ulong_t* dst = prop_l;
+        for(int i=0; i<*nitems_return; ++i)
+            dst[i] = to_ulong(src[i]);
+    }
+    return ret;
+}
+
+EXPORT int my32_XTextExtents(x64emu_t* emu, my_XFontStruct_32_t* font_struct, void* string, int nchars, int* dir, int* ascent, int* descent, my_XCharStruct_32_t* overall)
+{
+    //XCharStruct doesn't need any changes
+    inplace_XFontStruct_enlarge(font_struct);
+    int ret = my->XTextExtents(font_struct, string, nchars, dir, ascent, descent, overall);
+    inplace_XFontStruct_shrink(font_struct);
+    return ret;
+}
+
+EXPORT void* my32_XLoadQueryFont(x64emu_t* emu, void* dpy, void* name)
+{
+    void* ret = my->XLoadQueryFont(dpy, name);
+    inplace_XFontStruct_shrink(ret);
+    return ret;
+}
+
+EXPORT void my32_XLockDisplay(x64emu_t* emu, void* dpy)
+{
+    my->XLockDisplay(dpy);
+    // update some of the values now that the screen is locked
+    my_XDisplay_t* src = dpy;
+    my_XDisplay_32_t* dst = FindDisplay(dpy);
+    // should do a full sync?
+    dst->request = src->request;
 }
 
 #define CUSTOM_INIT                 \
