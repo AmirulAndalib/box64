@@ -712,6 +712,29 @@ static void* reverse_GtkLinkButtonUri_Fct(void* fct)
     return (void*)AddBridge(my_lib->w.bridge, vFppp, fct, 0, NULL);
 }
 
+// GtkKeySnoopFunc ...
+#define GO(A)   \
+static uintptr_t my_GtkKeySnoopFunc_fct_##A = 0;                    \
+static void my_GtkKeySnoopFunc_##A(void* a, void* b, void* c)       \
+{                                                                   \
+    RunFunctionFmt(my_GtkKeySnoopFunc_fct_##A, "ppp", a, b, c);     \
+}
+SUPER()
+#undef GO
+static void* find_GtkKeySnoopFunc_Fct(void* fct)
+{
+    if(!fct) return fct;
+    if(GetNativeFnc((uintptr_t)fct))  return GetNativeFnc((uintptr_t)fct);
+    #define GO(A) if(my_GtkKeySnoopFunc_fct_##A == (uintptr_t)fct) return my_GtkKeySnoopFunc_##A;
+    SUPER()
+    #undef GO
+    #define GO(A) if(my_GtkKeySnoopFunc_fct_##A == 0) {my_GtkKeySnoopFunc_fct_##A = (uintptr_t)fct; return my_GtkKeySnoopFunc_##A; }
+    SUPER()
+    #undef GO
+    printf_log(LOG_NONE, "Warning, no more slot for gtk-2 GtkKeySnoopFunc callback\n");
+    return NULL;
+}
+
 #undef SUPER
 
 EXPORT void my_gtk_dialog_add_buttons(x64emu_t* emu, void* dialog, void* first, uintptr_t* b)
@@ -1188,11 +1211,50 @@ EXPORT void my_gtk_print_job_send(x64emu_t* emu, void* job, void* f, void* data,
     my->gtk_print_job_send(job, find_GtkPrintJobCompleteFunc_Fct(f), data, findGDestroyNotifyFct(d));
 }
 
+EXPORT uint32_t my_gtk_key_snooper_install(x64emu_t* emu, void* f, void* data)
+{
+    (void)emu;
+    return my->gtk_key_snooper_install(find_GtkKeySnoopFunc_Fct(f), data);
+}
+
+static void addGtk2Alternate(library_t* lib)
+{
+    #define GO(A, W) AddAutomaticBridge(lib->w.bridge, W, dlsym(lib->w.lib, #A), 0, #A)
+    GO(gtk_marshal_BOOLEAN__POINTER,                            vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_INT_INT,                    vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_INT_INT_UINT,               vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_POINTER_INT_INT,            vFppuppp);
+    GO(gtk_marshal_BOOLEAN__POINTER_STRING_STRING_POINTER,      vFppuppp);
+    GO(gtk_marshal_BOOLEAN__VOID,                               vFppuppp);
+    GO(gtk_marshal_ENUM__ENUM,                                  vFppuppp);
+    GO(gtk_marshal_INT__POINTER,                                vFppuppp);
+    GO(gtk_marshal_INT__POINTER_CHAR_CHAR,                      vFppuppp);
+    GO(gtk_marshal_VOID__ENUM_FLOAT,                            vFppuppp);
+    GO(gtk_marshal_VOID__ENUM_FLOAT_BOOLEAN,                    vFppuppp);
+    GO(gtk_marshal_VOID__INT_INT,                               vFppuppp);
+    GO(gtk_marshal_VOID__INT_INT_POINTER,                       vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_INT,                           vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_INT_INT_POINTER_UINT_UINT,     vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER,                       vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER_POINTER,               vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_POINTER_UINT_UINT,             vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_STRING_STRING,                 vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT,                          vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT_ENUM,                     vFppuppp);
+    GO(gtk_marshal_VOID__POINTER_UINT_UINT,                     vFppuppp);
+    GO(gtk_marshal_VOID__STRING_INT_POINTER,                    vFppuppp);
+    GO(gtk_marshal_VOID__UINT_POINTER_UINT_ENUM_ENUM_POINTER,   vFppuppp);
+    GO(gtk_marshal_VOID__UINT_POINTER_UINT_UINT_ENUM,           vFppuppp);
+    GO(gtk_marshal_VOID__UINT_STRING,                           vFppuppp);
+    #undef GO
+}
+
 #define PRE_INIT    \
     if(box64_nogtk) \
         return -1;
 
 #define CUSTOM_INIT \
+    addGtk2Alternate(lib);                                                      \
     SetGtkObjectID(my->gtk_object_get_type());                                  \
     SetGtkWidget2ID(my->gtk_widget_get_type());                                 \
     SetGtkContainer2ID(my->gtk_container_get_type());                           \
